@@ -97,10 +97,10 @@ status_font = tkfont.Font(family="Helvetica", size=10, weight="bold")
 # --- Global variable for the status bar label ---
 status_bar_label = None
 
-# --- Global flag to control balloon animation ---
+# --- Global flag to control balloon animation (not used directly for fireworks) ---
 _last_election_state_for_balloons = None
 
-# --- Global reference for results window (for balloon animation) ---
+# --- Global reference for results window (for fireworks animation) ---
 results_top_window = None
 
 def clear_window():
@@ -361,7 +361,7 @@ def admin_login_screen():
             error_label = create_label(root, "Invalid admin credentials", label_font, fg=ERROR_COLOR)
             error_label.pack(pady=10)
             root.after(2000, lambda: error_label.destroy() if error_label.winfo_exists() else None)
-    
+            
     btn_frame = Frame(root, bg=BG_COLOR)
     btn_frame.pack(pady=20)
 
@@ -744,95 +744,31 @@ def manage_election_page():
     create_label(status_frame, results_status_text, label_font, fg=results_status_color).grid(row=3, column=1, padx=5, pady=5, sticky="w")
 
 
-    # Date and Time input for setting election period
-    datetime_frame = Frame(root, bg=BG_COLOR, bd=2, relief="groove", padx=10, pady=10)
-    datetime_frame.pack(pady=20)
+    # Election control buttons
+    control_frame = Frame(root, bg=BG_COLOR)
+    control_frame.pack(pady=20)
 
-    create_label(datetime_frame, "Set Election Period (Optional for Active/Closed):", subtitle_font).grid(row=0, column=0, columnspan=4, pady=10)
+    # Start Election button
+    start_btn_state = NORMAL if current_status == 'Pending' else DISABLED
+    create_button(control_frame, "Start Election", lambda: set_election_status('Active', start_time=datetime.datetime.now()),
+                  width=25, state=start_btn_state).pack(pady=5)
 
-    create_label(datetime_frame, "Start Date (YYYY-MM-DD):").grid(row=1, column=0, padx=5, pady=2, sticky="w")
-    start_date_entry = create_entry(datetime_frame, width=20)
-    start_date_entry.grid(row=1, column=1, padx=5, pady=2, sticky="w")
+    # End Election and Release Results button
+    end_release_btn_state = NORMAL if current_status == 'Active' else DISABLED
+    create_button(control_frame, "End Election & Release Results", release_results,
+                  width=25, bg_override=ERROR_COLOR, state=end_release_btn_state).pack(pady=5)
 
-    create_label(datetime_frame, "Start Time (HH:MM:SS):").grid(row=2, column=0, padx=5, pady=2, sticky="w")
-    start_time_entry = create_entry(datetime_frame, width=20)
-    start_time_entry.grid(row=2, column=1, padx=5, pady=2, sticky="w")
+    # Reset Election button
+    reset_btn = create_button(control_frame, "Reset Election (Clear All Votes)", reset_election,
+                               width=25, bg_override="#8B4513", activebg_override="#A0522D")
+    reset_btn.pack(pady=5)
 
-    create_label(datetime_frame, "End Date (YYYY-MM-DD):").grid(row=1, column=2, padx=5, pady=2, sticky="w")
-    end_date_entry = create_entry(datetime_frame, width=20)
-    end_date_entry.grid(row=1, column=3, padx=5, pady=2, sticky="w")
-
-    create_label(datetime_frame, "End Time (HH:MM:SS):").grid(row=2, column=2, padx=5, pady=2, sticky="w")
-    end_time_entry = create_entry(datetime_frame, width=20)
-    end_time_entry.grid(row=2, column=3, padx=5, pady=2, sticky="w")
-
-    def validate_datetime(date_str, time_str):
-        if not date_str and not time_str:
-            return None # Allow empty for optional fields
-        if not date_str or not time_str:
-            messagebox.showerror("Error", "Both date and time must be provided if setting a period.")
-            return False
-        try:
-            dt_str = f"{date_str} {time_str}"
-            return datetime.datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            messagebox.showerror("Error", "Invalid date or time format. Use YYYY-MM-DD and HH:MM:SS.")
-            return False
-
-    def start_election_action():
-        start_dt = validate_datetime(start_date_entry.get().strip(), start_time_entry.get().strip())
-        if start_dt is False: return
-
-        if start_dt and start_dt < datetime.datetime.now():
-            messagebox.showerror("Error", "Start time cannot be in the past.")
-            return
-        
-        # Reset results_released to 0 when starting a new election
-        cursor.execute("UPDATE election_state SET results_released=0 WHERE id=1")
-        conn.commit()
-        set_election_status('Active', start_time=start_dt)
-        manage_election_page() # Refresh page
-
-    def end_election_action():
-        end_dt = validate_datetime(end_date_entry.get().strip(), end_time_entry.get().strip())
-        if end_dt is False: return
-
-        current_status, start_time_str, _, _ = get_election_state()
-        if current_status != 'Active':
-            messagebox.showerror("Error", "Election must be Active to end it.")
-            return
-
-        if start_time_str:
-            start_dt_obj = datetime.datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S")
-            if end_dt and end_dt < start_dt_obj:
-                messagebox.showerror("Error", "End time cannot be before start time.")
-                return
-        
-        if end_dt and end_dt > datetime.datetime.now():
-             if not messagebox.askyesno("Confirm Future End", "You are setting an end time in the future. The election will remain Active until then. Do you want to proceed?"):
-                 return
-        
-        set_election_status('Closed', end_time=end_dt)
-        manage_election_page() # Refresh page
+    # Disable reset button if election is active to prevent accidental resets during voting
+    if current_status == 'Active':
+        reset_btn.config(state=DISABLED)
+    else:
+        reset_btn.config(state=NORMAL)
     
-    action_btn_frame = Frame(root, bg=BG_COLOR)
-    action_btn_frame.pack(pady=10)
-
-    # Start Election button (active if not active or closed)
-    start_btn_state = NORMAL if current_status != 'Active' else DISABLED
-    create_button(action_btn_frame, "Start Election", start_election_action, width=20, state=start_btn_state).grid(row=0, column=0, padx=5, pady=5)
-
-    # End Election button (active only if election is active)
-    end_btn_state = NORMAL if current_status == 'Active' else DISABLED
-    create_button(action_btn_frame, "End Election", end_election_action, width=20, state=end_btn_state).grid(row=0, column=1, padx=5, pady=5)
-
-    # --- New Button: End Election and Release Results ---
-    release_results_btn_state = NORMAL if current_status == 'Active' and not results_released_status else DISABLED
-    create_button(action_btn_frame, "End Election and Release Results", release_results, width=30, bg_override=SUCCESS_COLOR, state=release_results_btn_state).grid(row=1, column=0, columnspan=2, padx=5, pady=10)
-
-    # --- New Button: Reset Election ---
-    create_button(action_btn_frame, "Reset Election (Clear All Votes)", reset_election, width=30, bg_override=ERROR_COLOR).grid(row=2, column=0, columnspan=2, padx=5, pady=10)
-
     create_button(root, "Back to Admin Dashboard", admin_dashboard, width=25).pack(pady=10)
 
 # --- Voter Registration ---
@@ -861,7 +797,6 @@ def voter_register_screen():
         username = username_entry.get().strip()
         password = password_entry.get().strip()
         birth_year = birth_year_entry.get().strip()
-
         if not username or not password or not birth_year:
             messagebox.showerror("Error", "Please fill all fields")
             return
@@ -869,7 +804,7 @@ def voter_register_screen():
         try:
             birth_year_int = int(birth_year)
             if len(str(birth_year_int)) != 4:
-                messagebox.showerror("Error", "Birth year must be a 4-digit number (e.g., 2000).")
+                messagebox.showerror("Error", "Birth year must be a 4-digit number.")
                 return
             current_year = datetime.datetime.now().year
             if current_year - birth_year_int < 18:
@@ -879,17 +814,16 @@ def voter_register_screen():
                 messagebox.showerror("Error", "Birth year cannot be in the future.")
                 return
         except ValueError:
-            messagebox.showerror("Error", "Invalid birth year. Please enter a valid 4-digit number.")
+            messagebox.showerror("Error", "Invalid birth year. Please enter a 4-digit number.")
             return
 
         cursor.execute("SELECT * FROM voters WHERE username=?", (username,))
         if cursor.fetchone():
             messagebox.showerror("Error", "Username already exists")
         else:
-            cursor.execute("INSERT INTO voters (username, password, birth_year) VALUES (?, ?, ?)",
-                           (username, password, birth_year_int))
+            cursor.execute("INSERT INTO voters (username, password, birth_year) VALUES (?, ?, ?)", (username, password, birth_year_int))
             conn.commit()
-            messagebox.showinfo("Success", "Voter registered successfully! You can now log in.")
+            messagebox.showinfo("Success", "Registration successful! You can now log in.")
             voter_login_screen()
 
     btn_frame = Frame(root, bg=BG_COLOR)
@@ -899,7 +833,12 @@ def voter_register_screen():
     create_button(btn_frame, "Back to Login", voter_login_screen).pack(pady=5)
 
 # --- Voter Login ---
+current_voter = None # Global variable to store logged-in voter's username
+
 def voter_login_screen():
+    global current_voter
+    current_voter = None # Reset current voter on login screen entry
+
     clear_window()
     update_status_bar()
     title = create_label(root, "Voter Login", title_font)
@@ -917,20 +856,22 @@ def voter_login_screen():
     password_entry.pack(pady=5)
 
     def login():
+        global current_voter
         username = username_entry.get().strip()
         password = password_entry.get().strip()
         cursor.execute("SELECT * FROM voters WHERE username=? AND password=?", (username, password))
         voter_data = cursor.fetchone()
         if voter_data:
+            current_voter = username # Set the global current_voter
             welcome_label = create_label(root, f"Welcome, {username}!", title_font)
             welcome_label.pack(pady=20)
             animate_label(welcome_label, [ACCENT_COLOR, HOVER_COLOR, SUCCESS_COLOR])
-            root.after(1500, lambda: voter_dashboard(username))
+            root.after(1500, voter_dashboard)
         else:
-            error_label = create_label(root, "Invalid voter credentials", label_font, fg=ERROR_COLOR)
+            error_label = create_label(root, "Invalid username or password", label_font, fg=ERROR_COLOR)
             error_label.pack(pady=10)
             root.after(2000, lambda: error_label.destroy() if error_label.winfo_exists() else None)
-    
+            
     btn_frame = Frame(root, bg=BG_COLOR)
     btn_frame.pack(pady=20)
 
@@ -939,229 +880,370 @@ def voter_login_screen():
     create_button(root, "Back to Main Menu", main_menu).pack(pady=10)
 
 # --- Voter Dashboard ---
-def voter_dashboard(username):
+def voter_dashboard():
     clear_window()
     update_status_bar()
-    create_label(root, f"Voter Dashboard - {username}", title_font).pack(pady=20)
+    create_label(root, f"Voter Dashboard for {current_voter}", title_font).pack(pady=20)
 
-    current_status, _, _, _ = get_election_state()
-    cursor.execute("SELECT voted FROM voters WHERE username=?", (username,))
+    election_status, _, _, results_released = get_election_state()
+    
+    # Check if voter has already voted
+    cursor.execute("SELECT voted FROM voters WHERE username=?", (current_voter,))
     has_voted = cursor.fetchone()[0]
 
-    if current_status == 'Active':
-        if has_voted == 0:
-            create_button(root, "Cast Your Vote", lambda: cast_vote_screen(username), width=30).pack(pady=10)
-        else:
-            create_label(root, "You have already voted in this election.", label_font, fg=SUCCESS_COLOR).pack(pady=10)
-    elif current_status == 'Pending':
-        create_label(root, "Election is not yet active. Please check back later.", label_font, fg=ACCENT_COLOR).pack(pady=10)
-    else: # Closed
-        create_label(root, "Election is closed. You can view results.", label_font, fg=ERROR_COLOR).pack(pady=10)
+    vote_button_state = DISABLED
+    vote_message = ""
 
-    create_button(root, "View Results", lambda: display_results(is_admin_view=False), width=30).pack(pady=10)
-    create_button(root, "Logout", main_menu, width=30, bg_override=ERROR_COLOR).pack(pady=10)
+    if election_status == 'Active' and not has_voted:
+        vote_button_state = NORMAL
+        vote_message = "The election is active! Cast your vote."
+    elif has_voted:
+        vote_message = "You have already voted in this election."
+    elif election_status == 'Pending':
+        vote_message = "The election has not started yet. Please wait for the admin to activate it."
+    elif election_status == 'Closed':
+        vote_message = "The election is closed. You can view the results."
+
+    create_label(root, vote_message, label_font).pack(pady=10)
+
+    create_button(root, "Cast Vote", cast_vote_screen, width=25, state=vote_button_state).pack(pady=10)
+    
+    # Enable "View Results" button only if election is closed AND results are released
+    view_results_state = NORMAL if election_status == 'Closed' and results_released else DISABLED
+    create_button(root, "View Results", lambda: display_results(is_admin_view=False), width=25, state=view_results_state).pack(pady=10)
+
+    create_button(root, "Logout", main_menu, width=25, bg_override=ERROR_COLOR).pack(pady=10)
 
 # --- Cast Vote Screen ---
-def cast_vote_screen(username):
+def cast_vote_screen():
     clear_window()
     update_status_bar()
     create_label(root, "Cast Your Vote", title_font).pack(pady=20)
 
-    current_status, _, _, _ = get_election_state()
-    if current_status != 'Active':
-        messagebox.showerror("Error", "Voting is only allowed when the election is Active.")
-        voter_dashboard(username)
+    election_status, _, _, _ = get_election_state()
+    if election_status != 'Active':
+        messagebox.showerror("Error", "Voting is currently not active.")
+        voter_dashboard()
         return
-
-    cursor.execute("SELECT voted FROM voters WHERE username=?", (username,))
+    
+    cursor.execute("SELECT voted FROM voters WHERE username=?", (current_voter,))
     if cursor.fetchone()[0] == 1:
         messagebox.showinfo("Already Voted", "You have already cast your vote in this election.")
-        voter_dashboard(username)
+        voter_dashboard()
         return
 
     cursor.execute("SELECT party_name, leader_name FROM candidates")
     candidates = cursor.fetchall()
 
     if not candidates:
-        create_label(root, "No candidates registered yet. Please inform the administrator.", label_font, fg=ERROR_COLOR).pack(pady=20)
-        create_button(root, "Back to Dashboard", lambda: voter_dashboard(username)).pack(pady=10)
+        create_label(root, "No candidates registered yet. Please check back later.", label_font).pack(pady=20)
+        create_button(root, "Back to Dashboard", voter_dashboard).pack(pady=10)
         return
 
-    vote_var = StringVar(root)
-    # Set initial value to the first candidate if available, or empty if not
+    selected_candidate = StringVar(root)
+    
+    # Default selection to first candidate if available, otherwise "None"
     if candidates:
-        vote_var.set(candidates[0][0])
-    
-    create_label(root, "Select your candidate:", label_font).pack(pady=10)
+        selected_candidate.set(candidates[0][0])
+    else:
+        selected_candidate.set("No Candidates")
 
-    candidate_options = [f"{c[0]} ({c[1]})" for c in candidates]
-    
-    # Dropdown menu for candidates
-    option_menu = OptionMenu(root, vote_var, *[c[0] for c in candidates]) # Store party name in vote_var
-    option_menu.config(bg=ACCENT_COLOR, fg=FG_COLOR, font=label_font, relief="raised", bd=2)
-    option_menu["menu"].config(bg=FG_COLOR, fg=TEXT_COLOR, font=label_font)
-    option_menu.pack(pady=10)
+    option_menu_label = create_label(root, "Select your candidate:", label_font)
+    option_menu_label.pack(pady=10)
+
+    # Use a dropdown for candidates
+    candidate_names = [c[0] for c in candidates]
+    candidate_dropdown = ttk.OptionMenu(root, selected_candidate, selected_candidate.get(), *candidate_names)
+    candidate_dropdown.config(width=30, style="TButton") # Apply TButton style for better appearance
+    candidate_dropdown.pack(pady=10)
+
+    style = ttk.Style()
+    style.configure("TButton", font=label_font, background=BUTTON_COLOR, foreground=FG_COLOR)
+    style.map("TButton",
+              background=[('active', HOVER_COLOR)],
+              foreground=[('active', FG_COLOR)])
 
     def submit_vote():
-        selected_party = vote_var.get()
-        if not selected_party:
-            messagebox.showerror("Error", "Please select a candidate to vote.")
+        chosen_party = selected_candidate.get()
+        if chosen_party == "No Candidates":
+            messagebox.showerror("Error", "Please select a valid candidate.")
             return
 
-        if messagebox.askyesno("Confirm Vote", f"Are you sure you want to vote for {selected_party}? You cannot change your vote later."):
+        if messagebox.askyesno("Confirm Vote", f"Are you sure you want to vote for {chosen_party}? You cannot change your vote after this."):
             try:
-                cursor.execute("UPDATE candidates SET votes = votes + 1 WHERE party_name=?", (selected_party,))
-                cursor.execute("UPDATE voters SET voted = 1 WHERE username=?", (username,))
+                cursor.execute("UPDATE candidates SET votes = votes + 1 WHERE party_name=?", (chosen_party,))
+                cursor.execute("UPDATE voters SET voted = 1 WHERE username=?", (current_voter,))
                 conn.commit()
-                messagebox.showinfo("Vote Cast", "Your vote has been successfully cast!")
-                voter_dashboard(username)
+                messagebox.showinfo("Success", "Your vote has been cast successfully!")
+                voter_dashboard()
             except Exception as e:
                 messagebox.showerror("Error", f"An error occurred while casting vote: {e}")
         
-    create_button(root, "Submit Vote", submit_vote, width=20).pack(pady=20)
-    create_button(root, "Back to Dashboard", lambda: voter_dashboard(username), bg_override=ERROR_COLOR).pack(pady=10)
-# --- Display Results ---
-# --- Display Results ---
-def display_results(is_admin_view=False):
-    """
-    Displays the election results.
-    If is_admin_view is True, admin can see live results regardless of release status.
-    Otherwise, regular users only see results if they have been released.
-    """
-    global results_top_window # To manage the results window for animations
+    create_button(root, "Submit Vote", submit_vote, width=25).pack(pady=20)
+    create_button(root, "Back to Dashboard", voter_dashboard, width=25).pack(pady=10)
 
-    current_status, _, _, results_released_status = get_election_state()
+# --- Display Results (Public and Admin View) ---
+def display_results(is_admin_view):
+    global results_top_window # To manage the window for fireworks
 
-    if not is_admin_view and not results_released_status:
-        messagebox.showinfo("Results Not Available", "Election results have not yet been released.")
-        # Determine where to return based on the current screen
-        if main_menu_visible():
-            main_menu()
-        # You might need a way to pass the current voter username if they are logged in
-        # For simplicity, if not main menu, assume voter dashboard or back to main.
-        # A robust solution would pass the username from the calling voter_dashboard.
-        elif root.winfo_children() and "Voter Dashboard" in root.winfo_children()[1].cget("text"):
-            # This is a bit fragile, better to pass username or use a global current_user
-            pass # Stay on voter dashboard, message box is enough
+    current_status, _, _, results_released = get_election_state()
+
+    # Determine if results should be shown
+    if not is_admin_view and not results_released:
+        messagebox.showinfo("Results Not Available", "Election results are not yet released to the public.")
+        if current_voter:
+            voter_dashboard()
         else:
-             main_menu() # Default fallback
+            main_menu()
         return
-
-    # Destroy previous results window if open
+    
+    # Close any existing results window to prevent multiple
     if results_top_window and results_top_window.winfo_exists():
         results_top_window.destroy()
+        results_top_window = None
 
     results_top_window = Toplevel(root)
     results_top_window.title("Election Results")
-    results_top_window.geometry("700x600")
+    results_top_window.geometry("800x700")
     results_top_window.configure(bg=BG_COLOR)
-    results_top_window.grab_set() # Make it a modal window
+    results_top_window.transient(root) # Make it appear on top of the root window
+    results_top_window.grab_set() # Make it modal
 
-    create_label(results_top_window, "Election Results", title_font).pack(pady=15)
-    
-    if is_admin_view and not results_released_status:
-        create_label(results_top_window, "(Admin View - Results Not Officially Released)", label_font, fg=ACCENT_COLOR).pack(pady=5)
-    elif results_released_status:
-         create_label(results_top_window, "Official Results", label_font, fg=SUCCESS_COLOR).pack(pady=5)
+    create_label(results_top_window, "Election Results", title_font).pack(pady=10)
 
+    # Fetch candidate votes
+    cursor.execute("SELECT party_name, leader_name, votes FROM candidates ORDER BY votes DESC")
+    candidates_data = cursor.fetchall()
 
-    cursor.execute("SELECT party_name, votes FROM candidates ORDER BY votes DESC")
-    results = cursor.fetchall()
+    if not candidates_data:
+        create_label(results_top_window, "No candidates or votes recorded yet.", label_font).pack(pady=20)
+        
+        def close_results():
+            results_top_window.destroy()
+            if is_admin_view:
+                admin_dashboard()
+            elif current_voter:
+                voter_dashboard()
+            else:
+                main_menu()
 
-    if not results:
-        create_label(results_top_window, "No candidates found or no votes cast yet.", label_font, fg=ERROR_COLOR).pack(pady=20)
-        create_button(results_top_window, "Close", results_top_window.destroy).pack(pady=10)
+        create_button(results_top_window, "Back", close_results).pack(pady=10)
         return
 
-    # Calculate total votes for percentages
-    total_votes = sum(vote for _, vote in results)
+    # Prepare data for plotting
+    parties = [data[0] for data in candidates_data]
+    votes = [data[2] for data in candidates_data]
 
-    # Create a frame for the text results
-    text_results_frame = Frame(results_top_window, bg=BG_COLOR)
-    text_results_frame.pack(pady=10, padx=20, fill="x")
-
-    create_label(text_results_frame, "Party Name | Votes | Percentage", subtitle_font, fg=ACCENT_COLOR).pack(anchor="w")
-    create_label(text_results_frame, "--------------------------------------------------------", fg=FG_COLOR, bg=BG_COLOR).pack(anchor="w")
-
-    for party, votes in results:
-        percentage = (votes / total_votes * 100) if total_votes > 0 else 0
-        result_text = f"{party:<15} | {votes:<5} | {percentage:.2f}%"
-        create_label(text_results_frame, result_text, label_font).pack(anchor="w")
-
-    if total_votes > 0:
-        create_label(text_results_frame, f"\nTotal Votes Cast: {total_votes}", subtitle_font).pack(anchor="w")
+    # Find the winner(s)
+    max_votes = 0
+    if votes:
+        max_votes = max(votes)
     
-    # --- Bar Graph Visualization ---
-    try:
-        parties = [r[0] for r in results]
-        votes = [r[1] for r in results]
+    winners = [parties[i] for i, v in enumerate(votes) if v == max_votes and max_votes > 0]
+    
+    # Display results in a Treeview
+    style = ttk.Style()
+    style.theme_use("clam")
+    style.configure("Treeview", background=FG_COLOR, foreground=TEXT_COLOR, fieldbackground=FG_COLOR, font=label_font)
+    style.configure("Treeview.Heading", background=ACCENT_COLOR, foreground="white", font=button_font)
+    style.map("Treeview", background=[('selected', HOVER_COLOR)])
 
-        if parties: # Only attempt to plot if there are candidates
-            fig, ax = plt.subplots(figsize=(6, 4), facecolor=BG_COLOR)
-            ax.bar(parties, votes, color=ACCENT_COLOR)
-            ax.set_xlabel("Parties", color=FG_COLOR)
-            ax.set_ylabel("Votes", color=FG_COLOR)
-            ax.set_title("Election Results Bar Graph", color=FG_COLOR)
-            ax.tick_params(axis='x', colors=FG_COLOR, rotation=45) # Removed ha='right'
-            ax.tick_params(axis='y', colors=FG_COLOR)
-            ax.set_facecolor(BG_COLOR)
-            fig.tight_layout() # Adjust layout to prevent labels from overlapping
+    tree_frame = Frame(results_top_window, bg=BG_COLOR)
+    tree_frame.pack(pady=10, fill="both", expand=True, padx=20)
 
-            # Embed the plot in Tkinter
-            canvas = FigureCanvasTkAgg(fig, master=results_top_window)
-            canvas_widget = canvas.get_tk_widget()
-            canvas_widget.pack(pady=20, padx=20, fill="both", expand=True)
+    tree = ttk.Treeview(tree_frame, columns=("Rank", "Party Name", "Leader Name", "Votes"), show='headings')
+    tree.heading("Rank", text="Rank")
+    tree.heading("Party Name", text="Party Name")
+    tree.heading("Leader Name", text="Leader Name")
+    tree.heading("Votes", text="Votes")
 
-            # Optional: Add a toolbar for zooming/panning
-            toolbar = NavigationToolbar2Tk(canvas, results_top_window)
-            toolbar.update()
-            canvas_widget.pack()
+    tree.column("Rank", width=50, anchor="center")
+    tree.column("Party Name", width=150, anchor="center")
+    tree.column("Leader Name", width=150, anchor="center")
+    tree.column("Votes", width=80, anchor="center")
+
+    tree.pack(side="left", fill="both", expand=True)
+
+    scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+    scrollbar.pack(side="right", fill="y")
+    tree.configure(yscrollcommand=scrollbar.set)
+
+    for i, (party, leader, num_votes) in enumerate(candidates_data):
+        rank = i + 1
+        tree.insert("", END, values=(rank, party, leader, num_votes))
+
+    # Display winner(s) clearly
+    if winners:
+        if len(winners) == 1:
+            winner_text = f"Winner: {winners[0]} with {max_votes} votes!"
+            winner_label = create_label(results_top_window, winner_text, subtitle_font, fg=SUCCESS_COLOR)
+            winner_label.pack(pady=10)
+            
+            # Start fireworks animation for a single winner
+            start_fireworks_animation(results_top_window)
+
         else:
-            create_label(results_top_window, "Not enough data to generate graph.", label_font, fg=ACCENT_COLOR).pack(pady=10)
+            winner_text = "It's a Tie! Winners: " + ", ".join(winners) + f" with {max_votes} votes each!"
+            tie_label = create_label(results_top_window, winner_text, subtitle_font, fg=ACCENT_COLOR)
+            tie_label.pack(pady=10)
+            # Still play fireworks for ties
+            start_fireworks_animation(results_top_window) 
 
-    except Exception as e:
-        messagebox.showerror("Graph Error", f"Could not generate graph: {e}")
+    else:
+        create_label(results_top_window, "No clear winner yet (or no votes cast).", subtitle_font).pack(pady=10)
 
-    create_button(results_top_window, "Close", results_top_window.destroy, width=15).pack(pady=15)
-def voter_dashboard_visible():
-    """Checks if the voter dashboard is currently displayed."""
-    for widget in root.winfo_children():
-        # This is a bit of a heuristic, but good enough for this example
-        if isinstance(widget, Label) and "Voter Dashboard" in widget.cget("text"):
-            return True
-    return False
 
-def main_menu_visible():
-    """Checks if the main menu is currently displayed."""
-    for widget in root.winfo_children():
-        if isinstance(widget, Label) and widget.cget("text") == "Welcome to Voting System":
-            return True
-    return False
+    # Bar Graph for Visual Representation
+    fig, ax = plt.subplots(figsize=(6, 4), facecolor=BG_COLOR)
+    ax.bar(parties, votes, color=ACCENT_COLOR)
+    ax.set_ylabel("Votes", color=FG_COLOR)
+    ax.set_title("Vote Distribution", color=FG_COLOR)
+    ax.tick_params(axis='x', colors=FG_COLOR, rotation=45, ha='right')
+    ax.tick_params(axis='y', colors=FG_COLOR)
+    ax.set_facecolor(BG_COLOR) # Set plot area background
+    plt.tight_layout()
 
+    # Embed matplotlib graph into Tkinter
+    canvas = FigureCanvasTkAgg(fig, master=results_top_window)
+    canvas_widget = canvas.get_tk_widget()
+    canvas_widget.pack(pady=10)
+
+    # Navigation toolbar for the graph (optional)
+    toolbar_frame = Frame(results_top_window, bg=BG_COLOR)
+    toolbar_frame.pack(pady=5)
+    toolbar = NavigationToolbar2Tk(canvas, toolbar_frame)
+    toolbar.update()
+    canvas_widget.pack(pady=10, fill=BOTH, expand=True)
+
+    def close_results():
+        results_top_window.destroy()
+        if is_admin_view:
+            admin_dashboard()
+        elif current_voter:
+            voter_dashboard()
+        else:
+            main_menu()
+
+    create_button(results_top_window, "Close Results", close_results).pack(pady=10)
+
+# --- Fireworks Animation (New Section) ---
+def start_fireworks_animation(parent_window):
+    """
+    Creates a canvas overlay for fireworks animation.
+    parent_window should be the Toplevel window displaying results.
+    """
+    # Get the current dimensions of the parent window
+    parent_window.update_idletasks() # Ensure dimensions are up-to-date
+    canvas_width = parent_window.winfo_width()
+    canvas_height = parent_window.winfo_height()
+
+    # Create a transparent canvas that overlays the entire parent window
+    fireworks_canvas = Canvas(parent_window, width=canvas_width, height=canvas_height, 
+                              bg='', # Transparent background
+                              highlightthickness=0)
+    fireworks_canvas.place(x=0, y=0, relwidth=1, relheight=1) # Overlay on top
+    fireworks_canvas.lift() # Ensure it's on top of other widgets in the Toplevel
+
+    # List to hold active firework particles
+    active_particles = []
+
+    # Function to create a single firework particle
+    def create_particle(x, y, color, size, lifetime, canvas_obj):
+        particle_id = canvas_obj.create_oval(x - size, y - size, x + size, y + size, fill=color, outline=color)
+        
+        # Random velocity components for explosion effect
+        angle = random.uniform(0, 2 * 3.14159)
+        speed = random.uniform(1, 5)
+        dx = speed * math.cos(angle)
+        dy = speed * math.sin(angle)
+        
+        # Store particle properties
+        active_particles.append({'id': particle_id, 'dx': dx, 'dy': dy, 'lifetime': lifetime, 'original_lifetime': lifetime, 'color': color})
+
+    # Function to update and draw fireworks
+    def animate_fireworks():
+        if not fireworks_canvas.winfo_exists():
+            return # Stop animation if the canvas is destroyed
+
+        # Clear previous particles (re-drawing all each frame)
+        fireworks_canvas.delete("all") 
+
+        # Create new firework bursts occasionally
+        if random.random() < 0.1: # Adjust frequency of new fireworks bursts
+            x = random.randint(int(canvas_width * 0.2), int(canvas_width * 0.8))
+            y = random.randint(int(canvas_height * 0.2), int(canvas_height * 0.8))
+            colors = ["red", "orange", "yellow", "green", "blue", "purple", "white", "pink", "cyan", "magenta"]
+            num_particles = random.randint(20, 40) # Number of particles per burst
+            main_color = random.choice(colors)
+            for _ in range(num_particles):
+                create_particle(x, y, main_color, random.randint(2, 4), random.randint(30, 70), fireworks_canvas)
+
+        # Update and draw existing particles
+        particles_to_remove = []
+        for particle in active_particles:
+            item_id = particle['id']
+            # Move particle
+            fireworks_canvas.move(item_id, particle['dx'], particle['dy'])
+            particle['lifetime'] -= 1
+
+            # Simple fading effect by changing color slightly or just letting it expire
+            # Tkinter canvas doesn't directly support alpha for items, so we rely on deletion
+            # and short lifetimes for the "fade" effect.
+
+            if particle['lifetime'] <= 0:
+                particles_to_remove.append(particle)
+            else:
+                # Re-create the particle to simulate movement and "fade" (by not redrawing old ones)
+                # This is a common pattern for canvas animations without direct alpha support
+                current_coords = fireworks_canvas.coords(item_id)
+                if current_coords: # Ensure item still exists before trying to get coords
+                    x1, y1, x2, y2 = current_coords
+                    size = (x2 - x1) / 2
+                    fireworks_canvas.create_oval(x1, y1, x2, y2, fill=particle['color'], outline=particle['color'])
+
+
+        # Remove expired particles from the list
+        for particle in particles_to_remove:
+            # The actual canvas item is deleted by `fireworks_canvas.delete("all")` at the start of the frame.
+            # We just need to remove it from our `active_particles` list.
+            active_particles.remove(particle)
+        
+        # Schedule next update
+        parent_window.after(30, animate_fireworks) # Adjust speed of animation (lower number = faster)
+
+    import math # Import math for trigonometric functions
+
+    # Start the animation
+    animate_fireworks()
+
+    # Duration for fireworks (e.g., 5 seconds)
+    animation_duration_ms = 5000 
+    parent_window.after(animation_duration_ms, fireworks_canvas.destroy) # Stop fireworks after duration
 
 # --- Main Menu ---
 def main_menu():
     clear_window()
-    update_status_bar() # Ensure status bar is always visible
+    update_status_bar()
+    title = create_label(root, "Welcome to the Voting System", title_font)
+    title.pack(pady=40)
 
-    welcome_label = create_label(root, "Welcome to Voting System", title_font)
-    welcome_label.pack(pady=40)
-    animate_label(welcome_label, [ACCENT_COLOR, HOVER_COLOR])
-
+    # Frame for buttons to center them
     button_frame = Frame(root, bg=BG_COLOR)
     button_frame.pack(pady=20)
 
-    create_button(button_frame, "Admin Login", admin_login_screen).pack(pady=10)
-    create_button(button_frame, "Voter Login", voter_login_screen).pack(pady=10)
+    create_button(button_frame, "Admin Login", admin_login_screen, width=25).pack(pady=10)
+    create_button(button_frame, "Voter Login", voter_login_screen, width=25).pack(pady=10)
     
-    # View Results for public (checks results_released_status)
-    create_button(button_frame, "View Results", lambda: display_results(is_admin_view=False)).pack(pady=10)
-    create_button(button_frame, "Exit", root.quit, bg_override=ERROR_COLOR).pack(pady=10)
+    # Check election status for public results button
+    election_status, _, _, results_released = get_election_state()
+    public_results_btn_state = NORMAL if election_status == 'Closed' and results_released else DISABLED
+    create_button(button_frame, "View Public Results", lambda: display_results(is_admin_view=False), width=25, state=public_results_btn_state).pack(pady=10)
+    
+    create_button(button_frame, "Exit", root.quit, width=25, bg_override=ERROR_COLOR).pack(pady=10)
 
-# Initial setup
-update_status_bar() # Initialize the status bar
-main_menu()
-
-root.mainloop()
-conn.close()
-
+# Initial call to set up the main menu
+if __name__ == "__main__":
+    update_status_bar() # Initialize the status bar on startup
+    main_menu()
+    root.mainloop()
+    conn.close()
